@@ -47,7 +47,7 @@ class HistoryResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     """Request schema for POST /feedback endpoint."""
     prediction_id: int = Field(..., gt=0)
-    true_label: str = Field(..., pattern="^(beverages|snacks)$")
+    true_label: str = Field(..., pattern="^(beverage|snack|beverages|snacks)$")
 
 
 class FeedbackResponse(BaseModel):
