@@ -1,49 +1,50 @@
 """FastAPI application for Smart Product Categorization System."""
+
 import json
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import safetensors.torch
 import torch
 import torchvision.transforms as transforms
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
-
 from database import (
-    init_db,
-    get_db,
-    PredictionEvent,
     HumanFeedback,
+    PredictionEvent,
     SessionLocal,
+    get_db,
+    init_db,
 )
-from ml_model import build_model, ProductClassifier
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from ml_model import ProductClassifier, build_model
+from PIL import Image
 from quality import analyze_quality
 from schemas import (
-    PredictionResponse,
-    HistoryResponse,
-    HistoryItem,
     FeedbackRequest,
     FeedbackResponse,
     HealthResponse,
+    HistoryItem,
+    HistoryResponse,
+    PredictionResponse,
 )
-
 
 MODEL_PATH = Path(__file__).parent / "models" / "model.safetensors"
 CLASS_LABELS = ["beverage", "snack"]
 NUM_CLASSES = 2
 
-classifier: Optional[ProductClassifier] = None
+classifier: Any = None
 
-transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
+transform = transforms.Compose(
+    [
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+)
 
 
 @asynccontextmanager
@@ -76,6 +77,7 @@ async def lifespan(app: FastAPI):
 
         class LabeledClassifier:
             """Wrapper to add label mapping to the model."""
+
             def __init__(self, model, label_map, loaded):
                 self.model = model
                 self.label_map = label_map
@@ -274,9 +276,11 @@ async def submit_feedback(request: FeedbackRequest):
     """Submit human feedback for a low-confidence prediction."""
     db = SessionLocal()
     try:
-        prediction = db.query(PredictionEvent).filter(
-            PredictionEvent.id == request.prediction_id
-        ).first()
+        prediction = (
+            db.query(PredictionEvent)
+            .filter(PredictionEvent.id == request.prediction_id)
+            .first()
+        )
 
         if not prediction:
             raise HTTPException(
@@ -303,4 +307,5 @@ async def submit_feedback(request: FeedbackRequest):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
