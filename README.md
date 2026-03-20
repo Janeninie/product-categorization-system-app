@@ -4,9 +4,39 @@ ML-powered web application that classifies product images into **beverage** or *
 
 ## Tech Stack
 
-- **Frontend:** Next.js 16 (App Router), React, Tailwind CSS, TypeScript
+- **Frontend:** Next.js 16 (App Router), React, Tailwind CSS, TypeScript, Axios, React Query (TanStack Query)
 - **Backend:** FastAPI (Python), PyTorch, safetensors, Pillow
 - **Database:** SQLite with SQLAlchemy
+
+## Frontend Architecture
+
+The frontend uses a modern data-fetching architecture:
+
+- **Axios** - HTTP client for API communication with interceptors and error handling
+- **React Query (TanStack Query)** - Server state management with caching, automatic refetching, and optimistic updates
+
+### Key Files
+
+```
+frontend/
+├── app/
+│   ├── page.tsx          # Main page component
+│   ├── layout.tsx        # Root layout with providers
+│   ├── providers.tsx     # React Query provider setup
+│   └── api/types.ts      # TypeScript interfaces for API responses
+├── lib/
+│   ├── api.ts            # Axios API client and endpoints
+│   └── hooks.ts          # React Query hooks (usePrediction, useHistory, useFeedback)
+```
+
+### React Query Hooks
+
+| Hook | Purpose |
+|------|---------|
+| `usePrediction()` | Upload image and get prediction |
+| `useHistory(limit, offset)` | Fetch prediction history |
+| `useFeedback()` | Submit human feedback |
+| `useHealth()` | Check backend health status |
 
 ## Quick Start
 

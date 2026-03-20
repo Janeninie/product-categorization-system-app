@@ -5,10 +5,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+import safetensors.torch
 import torch
 import torchvision.transforms as transforms
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Depends
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
 from database import (
@@ -30,7 +32,7 @@ from schemas import (
 )
 
 
-MODEL_PATH = Path(__file__).parent.parent / "refs" / "stage1" / "model.safetensors"
+MODEL_PATH = Path(__file__).parent / "models" / "model.safetensors"
 CLASS_LABELS = ["beverage", "snack"]
 NUM_CLASSES = 2
 
@@ -59,19 +61,45 @@ async def lifespan(app: FastAPI):
             dropout=0.3,
         )
 
+        model_loaded = False
         if MODEL_PATH.exists():
-            state_dict = torch.load_file(str(MODEL_PATH), device="cpu")
-            model.load_state_dict(state_dict)
+            try:
+                state_dict = safetensors.torch.load_file(str(MODEL_PATH), device="cpu")
+                model.load_state_dict(state_dict, strict=False)
+                model_loaded = True
+                print(f"Model weights loaded from {MODEL_PATH}")
+            except Exception as e:
+                print(f"Warning: Could not load model weights: {e}")
+                print("Using untrained model with random weights")
 
         model.eval()
-        classifier = ProductClassifier(
+
+        class LabeledClassifier:
+            """Wrapper to add label mapping to the model."""
+            def __init__(self, model, label_map, loaded):
+                self.model = model
+                self.label_map = label_map
+                self.idx_to_class = {int(k): v for k, v in label_map.items()}
+                self.loaded = loaded
+
+            def predict(self, x):
+                with torch.no_grad():
+                    logits = self.model(x)
+                    probs = torch.softmax(logits, dim=-1)
+                    conf, preds = torch.max(probs, dim=-1)
+                pred_idx = preds.item()
+                confidence = conf.item()
+                predicted_class = self.idx_to_class.get(pred_idx, str(pred_idx))
+                return predicted_class, confidence
+
+        classifier = LabeledClassifier(
             model=model,
             label_map={str(i): label for i, label in enumerate(CLASS_LABELS)},
+            loaded=model_loaded,
         )
-        print(f"Model loaded successfully from {MODEL_PATH}")
+        print(f"Model initialized successfully (weights loaded: {model_loaded})")
     except Exception as e:
-        print(f"Warning: Could not load model from {MODEL_PATH}: {e}")
-        print("Running with model not loaded - predictions will fail")
+        print(f"Error initializing model: {e}")
         classifier = None
 
     yield
@@ -84,6 +112,15 @@ app = FastAPI(
     description="ML-powered product categorization API",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# CORS middleware for Next.js frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

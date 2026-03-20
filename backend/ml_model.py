@@ -1,5 +1,4 @@
 """Machine Learning model for product categorization."""
-import json
 from pathlib import Path
 from typing import Optional
 
@@ -10,39 +9,69 @@ from torchvision import models
 from torchvision.models import EfficientNet_B0_Weights
 
 
-class _TransferModel(nn.Module):
-    """Transfer learning model using a pretrained backbone."""
+class ProductClassifier(nn.Module):
+    """Product classifier using EfficientNet-B0 backbone.
 
-    def __init__(self, backbone: nn.Module, num_classes: int, freeze_backbone: bool) -> None:
+    Architecture: EfficientNet-B0 features + AdaptiveAvgPool + Classifier head.
+    """
+    BACKBONE_OUT_FEATURES: int = 1280
+
+    def __init__(
+        self,
+        num_classes: int = 2,
+        freeze_backbone: bool = True,
+        dropout: float = 0.3,
+        pretrained: bool = True,
+    ) -> None:
         super().__init__()
-        self.num_classes = num_classes
-        self.backbone = backbone
 
-        if freeze_backbone:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
+        weights = EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
+        backbone = models.efficientnet_b0(weights=weights)
 
-        in_features = self._get_in_features(backbone)
+        self._backbone = backbone.features
+        self.pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            nn.Dropout(p=0.3),
-            nn.Linear(in_features, num_classes),
+            nn.Flatten(),
+            nn.Dropout(p=dropout),
+            nn.Linear(self.BACKBONE_OUT_FEATURES, num_classes),
         )
 
-    def _get_in_features(self, backbone: nn.Module) -> int:
-        """Extract the number of input features from the backbone."""
-        if hasattr(backbone, "classifier"):
-            return backbone.classifier[1].in_features
-        elif hasattr(backbone, "fc"):
-            return backbone.fc.in_features
-        elif hasattr(backbone, "head"):
-            return backbone.head.in_features
-        return 1280
+        self.num_classes = num_classes
+
+        if freeze_backbone:
+            self.freeze_backbone()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features = self.backbone.features(x) if hasattr(self.backbone, "features") else self.backbone(x)
-        if hasattr(features, "flatten"):
-            features = features.flatten(1)
-        return self.classifier(features)
+        x = self._backbone(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
+
+    def freeze_backbone(self) -> None:
+        for param in self._backbone.parameters():
+            param.requires_grad = False
+
+    def unfreeze_backbone(self) -> None:
+        for param in self._backbone.parameters():
+            param.requires_grad = True
+
+    def trainable_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def total_params(self) -> int:
+        return sum(p.numel() for p in self.parameters())
+
+    def save(self, path: Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "model_state_dict": self.state_dict(),
+                "num_classes": self.num_classes,
+            },
+            path,
+        )
 
 
 class SimpleCNN(nn.Module):
@@ -85,20 +114,6 @@ class SimpleCNN(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
-def _build_efficientnet_b0(num_classes: int, freeze_backbone: bool, dropout: float) -> _TransferModel:
-    """Build EfficientNet-B0 model."""
-    weights = EfficientNet_B0_Weights.DEFAULT
-    backbone = models.efficientnet_b0(weights=weights)
-    backbone.classifier = nn.Identity()
-    return _TransferModel(backbone, num_classes, freeze_backbone)
-
-
-_REGISTRY = {
-    "efficientnet_b0": lambda nc, fb, do: _build_efficientnet_b0(nc, fb, do),
-    "simple_cnn": lambda nc, fb, do: SimpleCNN(num_classes=nc, dropout=do),
-}
-
-
 def build_model(
     name: str = "efficientnet_b0",
     num_classes: int = 2,
@@ -116,72 +131,14 @@ def build_model(
     Returns:
         The built model.
     """
-    if name not in _REGISTRY:
-        raise ValueError(f"Unknown model: {name}. Available: {list(_REGISTRY.keys())}")
-    return _REGISTRY[name](num_classes, freeze_backbone, dropout)
-
-
-def load_model_weights(model: nn.Module, weights_path: Path, device: str = "cpu") -> nn.Module:
-    """Load model weights from a safetensors file.
-
-    Args:
-        model: The model to load weights into.
-        weights_path: Path to the .safetensors file.
-        device: Device to load weights to.
-
-    Returns:
-        The model with loaded weights.
-    """
-    state_dict = safetensors.torch.load_file(str(weights_path), device=device)
-    model.load_state_dict(state_dict)
-    return model
-
-
-class ProductClassifier:
-    """Wrapper for the product classification model."""
-
-    def __init__(self, model: nn.Module, label_map: dict):
-        self.model = model
-        self.label_map = label_map
-        self.idx_to_class = {v: k for k, v in label_map.items()}
-
-    @classmethod
-    def from_checkpoint(cls, checkpoint_path: Path, num_classes: int = 2, device: str = "cpu") -> "ProductClassifier":
-        """Load a product classifier from a checkpoint."""
-        checkpoint = safetensors.torch.load_file(str(checkpoint_path), device=device)
-
-        if "num_classes" in checkpoint:
-            num_classes = checkpoint["num_classes"]
-
-        label_map = {str(i): label for i, label in enumerate(["beverage", "snack"][:num_classes])}
-
-        model = build_model(name="efficientnet_b0", num_classes=num_classes)
-        if "model_state_dict" in checkpoint:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            model.load_state_dict(checkpoint)
-
-        model = model.to(device)
-        model.eval()
-
-        return cls(model, label_map)
-
-    def predict(self, x: torch.Tensor) -> tuple[str, float]:
-        """Predict the class and confidence for an input tensor.
-
-        Args:
-            x: Input tensor of shape (B, C, H, W).
-
-        Returns:
-            Tuple of (predicted_class, confidence).
-        """
-        with torch.no_grad():
-            logits = self.model(x)
-            probs = torch.softmax(logits, dim=-1)
-            conf, preds = torch.max(probs, dim=-1)
-
-        pred_idx = preds.item()
-        confidence = conf.item()
-        predicted_class = self.idx_to_class.get(pred_idx, str(pred_idx))
-
-        return predicted_class, confidence
+    if name == "efficientnet_b0":
+        return ProductClassifier(
+            num_classes=num_classes,
+            freeze_backbone=freeze_backbone,
+            dropout=dropout,
+            pretrained=False,
+        )
+    elif name == "simple_cnn":
+        return SimpleCNN(num_classes=num_classes, dropout=dropout)
+    else:
+        raise ValueError(f"Unknown model: {name}. Available: efficientnet_b0, simple_cnn")

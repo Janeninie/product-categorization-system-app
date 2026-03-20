@@ -1,49 +1,33 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import {
-  PredictionResponse,
-  HistoryResponse,
-  FeedbackRequest,
-  HistoryItem,
-} from "./api/types";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useState, useCallback } from "react";
+import { usePrediction, useHistory, useFeedback } from "@/lib/hooks";
+import { PredictionResponse, HistoryItem } from "./api/types";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string>("");
-  const [feedbackSaved, setFeedbackSaved] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
 
-  const fetchHistory = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/history?limit=20&offset=0`);
-      if (!res.ok) throw new Error("Failed to fetch history");
-      const data: HistoryResponse = await res.json();
-      setHistory(data.predictions);
-    } catch (err) {
-      console.error("Error fetching history:", err);
-    }
-  }, []);
+  const {
+    data: historyData,
+    refetch: refetchHistory,
+    isLoading: isHistoryLoading,
+  } = useHistory(20, 0);
+  const feedbackMutation = useFeedback();
 
-  useEffect(() => {
-    fetchHistory();
-  }, [fetchHistory]);
+  const predictionMutation = usePrediction();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       setFile(selectedFile);
       setPreview(URL.createObjectURL(selectedFile));
-      setPrediction(null);
-      setError(null);
-      setFeedbackSaved(false);
+      setSelectedLabel("");
     }
   };
 
@@ -51,61 +35,30 @@ export default function Home() {
     e.preventDefault();
     if (!file) return;
 
-    setIsLoading(true);
-    setError(null);
-    setFeedbackSaved(false);
-
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const res = await fetch(`${API_BASE}/predict`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || "Prediction failed");
-      }
-
-      const data: PredictionResponse = await res.json();
-      setPrediction(data);
+      const result = await predictionMutation.mutateAsync(file);
       showToast("Prediction completed successfully!", "success");
-      fetchHistory();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "An error occurred";
-      setError(message);
+      refetchHistory();
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Prediction failed";
       showToast(message, "error");
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const handleFeedbackSubmit = async () => {
+    const prediction = predictionMutation.data;
     if (!prediction || !selectedLabel) return;
 
     try {
-      const res = await fetch(`${API_BASE}/feedback`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prediction_id: prediction.prediction_id,
-          true_label: selectedLabel,
-        } as FeedbackRequest),
+      await feedbackMutation.mutateAsync({
+        prediction_id: prediction.prediction_id,
+        true_label: selectedLabel as "beverages" | "snacks",
       });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.detail || "Failed to submit feedback");
-      }
-
-      setFeedbackSaved(true);
       showToast("Feedback submitted successfully!", "success");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to submit feedback";
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Failed to submit feedback";
       showToast(message, "error");
     }
   };
@@ -118,6 +71,10 @@ export default function Home() {
   const formatConfidence = (conf: number) => (conf * 100).toFixed(1);
   const formatTime = (timestamp: string) =>
     new Date(timestamp).toLocaleString();
+
+  const prediction = predictionMutation.data;
+  const history = historyData?.predictions ?? [];
+  const feedbackSaved = feedbackMutation.isSuccess;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -189,22 +146,26 @@ export default function Home() {
 
             <button
               type="submit"
-              disabled={!file || isLoading}
+              disabled={!file || predictionMutation.isPending}
               className={`w-full py-3 px-6 rounded-lg font-medium text-white transition-colors ${
-                !file || isLoading
+                !file || predictionMutation.isPending
                   ? "bg-gray-400 cursor-not-allowed"
                   : "bg-blue-600 hover:bg-blue-700"
               }`}
             >
-              {isLoading ? "Processing..." : "Classify Image"}
+              {predictionMutation.isPending
+                ? "Processing..."
+                : "Classify Image"}
             </button>
           </form>
         </div>
 
-        {error && (
+        {predictionMutation.isError && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4">
             <p className="text-red-800 font-medium">Error</p>
-            <p className="text-red-600">{error}</p>
+            <p className="text-red-600">
+              {predictionMutation.error?.message || "An error occurred"}
+            </p>
           </div>
         )}
 
@@ -227,7 +188,9 @@ export default function Home() {
                 </div>
                 <div>
                   <p className="text-sm text-gray-500 mb-1">Latency</p>
-                  <p className="text-lg">{prediction.latency_ms.toFixed(2)} ms</p>
+                  <p className="text-lg">
+                    {prediction.latency_ms.toFixed(2)} ms
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500 mb-1">Image Size</p>
@@ -239,7 +202,9 @@ export default function Home() {
 
               {prediction.quality_warnings.length > 0 && (
                 <div className="mt-4 pt-4 border-t">
-                  <p className="text-sm text-gray-500 mb-2">Quality Warnings:</p>
+                  <p className="text-sm text-gray-500 mb-2">
+                    Quality Warnings:
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     {prediction.quality_warnings.map((warning) => (
                       <span
@@ -291,14 +256,16 @@ export default function Home() {
                     </select>
                     <button
                       onClick={handleFeedbackSubmit}
-                      disabled={!selectedLabel}
+                      disabled={!selectedLabel || feedbackMutation.isPending}
                       className={`px-6 py-2 rounded-lg font-medium text-white transition-colors ${
-                        !selectedLabel
+                        !selectedLabel || feedbackMutation.isPending
                           ? "bg-gray-400 cursor-not-allowed"
                           : "bg-red-600 hover:bg-red-700"
                       }`}
                     >
-                      Submit Feedback
+                      {feedbackMutation.isPending
+                        ? "Submitting..."
+                        : "Submit Feedback"}
                     </button>
                   </div>
                 ) : (
@@ -315,14 +282,16 @@ export default function Home() {
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Prediction History</h2>
             <button
-              onClick={fetchHistory}
+              onClick={() => refetchHistory()}
               className="text-blue-600 hover:text-blue-800 text-sm font-medium"
             >
               Refresh
             </button>
           </div>
 
-          {history.length === 0 ? (
+          {isHistoryLoading ? (
+            <p className="text-gray-500 text-center py-8">Loading history...</p>
+          ) : history.length === 0 ? (
             <p className="text-gray-500 text-center py-8">No predictions yet</p>
           ) : (
             <div className="overflow-x-auto">
@@ -341,7 +310,7 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.map((item) => (
+                  {history.map((item: HistoryItem) => (
                     <tr
                       key={item.id}
                       className="border-b border-gray-100 hover:bg-gray-50"
