@@ -114,6 +114,101 @@ class SimpleCNN(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
 
+class _TransferModel(nn.Module):
+    """Wrapper for torchvision transfer backbones with optional freezing."""
+
+    def __init__(self, backbone: nn.Module, freeze_backbone: bool) -> None:
+        super().__init__()
+        self._backbone = backbone
+        self._backbone_frozen = False
+        if freeze_backbone:
+            self.freeze_backbone()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self._backbone(x)
+
+    def freeze_backbone(self) -> None:
+        for name, param in self._backbone.named_parameters():
+            if not name.startswith("fc.") and not name.startswith("classifier."):
+                param.requires_grad = False
+        self._backbone_frozen = True
+
+    def unfreeze_backbone(self) -> None:
+        for param in self._backbone.parameters():
+            param.requires_grad = True
+        self._backbone_frozen = False
+
+
+def _build_resnet50(
+    num_classes: int,
+    freeze_backbone: bool,
+    dropout: float,
+) -> nn.Module:
+    backbone = models.resnet50(weights=None)
+    in_features = backbone.fc.in_features
+    backbone.fc = nn.Sequential(
+        nn.Dropout(p=dropout),
+        nn.Linear(in_features, num_classes),
+    )
+    return _TransferModel(backbone, freeze_backbone)
+
+
+def _build_mobilenetv3_large(
+    num_classes: int,
+    freeze_backbone: bool,
+    dropout: float,
+) -> nn.Module:
+    backbone = models.mobilenet_v3_large(weights=None)
+    in_features = backbone.classifier[-1].in_features
+    backbone.classifier[-1] = nn.Sequential(
+        nn.Dropout(p=dropout),
+        nn.Linear(in_features, num_classes),
+    )
+    return _TransferModel(backbone, freeze_backbone)
+
+
+def _build_convnext_tiny(
+    num_classes: int,
+    freeze_backbone: bool,
+    dropout: float,
+) -> nn.Module:
+    backbone = models.convnext_tiny(weights=None)
+    in_features = backbone.classifier[-1].in_features
+    backbone.classifier[-1] = nn.Sequential(
+        nn.Dropout(p=dropout),
+        nn.Linear(in_features, num_classes),
+    )
+    return _TransferModel(backbone, freeze_backbone)
+
+
+def _build_convnext_small(
+    num_classes: int,
+    freeze_backbone: bool,
+    dropout: float,
+) -> nn.Module:
+    backbone = models.convnext_small(weights=None)
+    in_features = backbone.classifier[-1].in_features
+    backbone.classifier[-1] = nn.Sequential(
+        nn.Dropout(p=dropout),
+        nn.Linear(in_features, num_classes),
+    )
+    return _TransferModel(backbone, freeze_backbone)
+
+
+def _build_convnext_base(
+    num_classes: int,
+    freeze_backbone: bool,
+    dropout: float,
+) -> nn.Module:
+    backbone = models.convnext_base(weights=None)
+    in_features = backbone.classifier[-1].in_features
+    backbone.classifier[-1] = nn.Sequential(
+        nn.Dropout(p=dropout),
+        nn.Linear(in_features, num_classes),
+    )
+    return _TransferModel(backbone, freeze_backbone)
+
+
 def build_model(
     name: str = "efficientnet_b0",
     num_classes: int = 2,
@@ -140,5 +235,38 @@ def build_model(
         )
     elif name == "simple_cnn":
         return SimpleCNN(num_classes=num_classes, dropout=dropout)
+    elif name == "resnet50":
+        return _build_resnet50(
+            num_classes=num_classes,
+            freeze_backbone=freeze_backbone,
+            dropout=dropout,
+        )
+    elif name == "mobilenetv3_large":
+        return _build_mobilenetv3_large(
+            num_classes=num_classes,
+            freeze_backbone=freeze_backbone,
+            dropout=dropout,
+        )
+    elif name == "convnext_tiny":
+        return _build_convnext_tiny(
+            num_classes=num_classes,
+            freeze_backbone=freeze_backbone,
+            dropout=dropout,
+        )
+    elif name == "convnext_small":
+        return _build_convnext_small(
+            num_classes=num_classes,
+            freeze_backbone=freeze_backbone,
+            dropout=dropout,
+        )
+    elif name == "convnext_base":
+        return _build_convnext_base(
+            num_classes=num_classes,
+            freeze_backbone=freeze_backbone,
+            dropout=dropout,
+        )
     else:
-        raise ValueError(f"Unknown model: {name}. Available: efficientnet_b0, simple_cnn")
+        raise ValueError(
+            "Unknown model: "
+            f"{name}. Available: efficientnet_b0, simple_cnn, resnet50, mobilenetv3_large, convnext_tiny, convnext_small, convnext_base"
+        )

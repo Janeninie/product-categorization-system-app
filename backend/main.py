@@ -1,10 +1,12 @@
 """FastAPI application for Smart Product Categorization System."""
 
+import io
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import safetensors.torch
 import torch
@@ -13,15 +15,14 @@ from database import (
     HumanFeedback,
     PredictionEvent,
     SessionLocal,
-    get_db,
     init_db,
 )
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from ml_model import ProductClassifier, build_model
+from ml_model import build_model
 from PIL import Image
 from quality import analyze_quality
+from sqlalchemy import text
 from schemas import (
     FeedbackRequest,
     FeedbackResponse,
@@ -34,6 +35,7 @@ from schemas import (
 MODEL_PATH = Path(__file__).parent / "models" / "model.safetensors"
 CLASS_LABELS = ["beverage", "snack"]
 NUM_CLASSES = 2
+MODEL_NAME = os.getenv("MODEL_NAME", "").strip().lower()
 
 classifier: Any = None
 
@@ -47,6 +49,46 @@ transform = transforms.Compose(
 )
 
 
+def infer_model_name_from_state_dict(state_dict: dict[str, torch.Tensor]) -> str:
+    """Infer primary model architecture hint from checkpoint parameter names."""
+    keys = set(state_dict.keys())
+
+    if any(k.startswith("conv_layers.") for k in keys):
+        return "simple_cnn"
+    if any(k.startswith("classifier.2.") for k in keys):
+        return "efficientnet_b0"
+    if any(k.startswith("_backbone.features.") and "layer_scale" in k for k in keys):
+        return "convnext_tiny"
+    if any(k.startswith("_backbone.fc.") for k in keys):
+        return "resnet50"
+    if any(k.startswith("_backbone.classifier.2.1.") for k in keys):
+        return "convnext_tiny"
+    if any(k.startswith("_backbone.classifier.3.") for k in keys):
+        return "mobilenetv3_large"
+
+    return "efficientnet_b0"
+
+
+def get_model_candidates_from_state_dict(state_dict: dict[str, torch.Tensor]) -> list[str]:
+    """Return ordered model candidates based on checkpoint key patterns."""
+    keys = set(state_dict.keys())
+
+    if any(k.startswith("_backbone.features.") and "layer_scale" in k for k in keys):
+        return ["convnext_tiny", "convnext_small", "convnext_base"]
+    if any(k.startswith("_backbone.classifier.2.1.") for k in keys):
+        return ["convnext_tiny", "convnext_small", "convnext_base"]
+    if any(k.startswith("_backbone.classifier.3.") for k in keys):
+        return ["mobilenetv3_large"]
+    if any(k.startswith("_backbone.fc.") for k in keys):
+        return ["resnet50"]
+    if any(k.startswith("conv_layers.") for k in keys):
+        return ["simple_cnn"]
+    if any(k.startswith("classifier.2.") for k in keys):
+        return ["efficientnet_b0"]
+
+    return [infer_model_name_from_state_dict(state_dict)]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load the ML model once at system startup."""
@@ -55,23 +97,45 @@ async def lifespan(app: FastAPI):
     init_db()
 
     try:
-        model = build_model(
-            name="efficientnet_b0",
-            num_classes=NUM_CLASSES,
-            freeze_backbone=False,
-            dropout=0.3,
-        )
-
-        model_loaded = False
+        state_dict = None
         if MODEL_PATH.exists():
+            state_dict = safetensors.torch.load_file(str(MODEL_PATH), device="cpu")
+
+        selected_model_name = MODEL_NAME or "mobilenetv3_large"
+        if state_dict is not None and not MODEL_NAME:
+            candidates = get_model_candidates_from_state_dict(state_dict)
+        elif MODEL_NAME:
+            candidates = [MODEL_NAME]
+        else:
+            candidates = [selected_model_name]
+
+        model = None
+        last_error: Exception | None = None
+        for candidate_name in candidates:
             try:
-                state_dict = safetensors.torch.load_file(str(MODEL_PATH), device="cpu")
-                model.load_state_dict(state_dict, strict=False)
-                model_loaded = True
-                print(f"Model weights loaded from {MODEL_PATH}")
+                candidate_model = build_model(
+                    name=candidate_name,
+                    num_classes=NUM_CLASSES,
+                    freeze_backbone=False,
+                    dropout=0.3,
+                )
+                if state_dict is not None:
+                    candidate_model.load_state_dict(state_dict, strict=True)
+                model = candidate_model
+                selected_model_name = candidate_name
+                break
             except Exception as e:
-                print(f"Warning: Could not load model weights: {e}")
-                print("Using untrained model with random weights")
+                last_error = e
+
+        if model is None:
+            raise RuntimeError(
+                "Could not match checkpoint to any backend model candidates "
+                f"{candidates}. Last error: {last_error}"
+            )
+
+        model_loaded = state_dict is not None
+        if model_loaded:
+            print(f"Model weights loaded from {MODEL_PATH}")
 
         model.eval()
 
@@ -99,7 +163,10 @@ async def lifespan(app: FastAPI):
             label_map={str(i): label for i, label in enumerate(CLASS_LABELS)},
             loaded=model_loaded,
         )
-        print(f"Model initialized successfully (weights loaded: {model_loaded})")
+        print(
+            f"Model initialized successfully "
+            f"(name={selected_model_name}, weights_loaded={model_loaded})"
+        )
     except Exception as e:
         print(f"Error initializing model: {e}")
         classifier = None
@@ -144,11 +211,10 @@ async def predict(file: UploadFile = File(...)):
 
     try:
         contents = await file.read()
-        pil_image = Image.open(file.file if hasattr(file, "file") else None)
-        if hasattr(file, "file") and file.file:
-            file.file.seek(0)
-            pil_image = Image.open(file.file)
-            pil_image.load()
+        if not contents:
+            raise ValueError("empty file")
+        pil_image = Image.open(io.BytesIO(contents))
+        pil_image.load()
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read image file.")
 
@@ -258,7 +324,7 @@ async def health_check():
     db_connected = False
     try:
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         db_connected = True
     except Exception:
@@ -276,6 +342,11 @@ async def submit_feedback(request: FeedbackRequest):
     """Submit human feedback for a low-confidence prediction."""
     db = SessionLocal()
     try:
+        normalized_true_label = {
+            "beverages": "beverage",
+            "snacks": "snack",
+        }.get(request.true_label, request.true_label)
+
         prediction = (
             db.query(PredictionEvent)
             .filter(PredictionEvent.id == request.prediction_id)
@@ -290,7 +361,7 @@ async def submit_feedback(request: FeedbackRequest):
 
         feedback = HumanFeedback(
             prediction_id=request.prediction_id,
-            true_label=request.true_label,
+            true_label=normalized_true_label,
         )
         db.add(feedback)
         db.commit()
