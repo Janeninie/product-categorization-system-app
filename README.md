@@ -31,12 +31,12 @@ frontend/
 
 ### React Query Hooks
 
-| Hook | Purpose |
-|------|---------|
-| `usePrediction()` | Upload image and get prediction |
-| `useHistory(limit, offset)` | Fetch prediction history |
-| `useFeedback()` | Submit human feedback |
-| `useHealth()` | Check backend health status |
+| Hook                        | Purpose                         |
+| --------------------------- | ------------------------------- |
+| `usePrediction()`           | Upload image and get prediction |
+| `useHistory(limit, offset)` | Fetch prediction history        |
+| `useFeedback()`             | Submit human feedback           |
+| `useHealth()`               | Check backend health status     |
 
 ## Quick Start
 
@@ -62,12 +62,12 @@ The frontend runs at `http://localhost:3000` and proxies API requests to the bac
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/predict` | POST | Upload an image (JPG/PNG) for classification |
-| `/history` | GET | Get prediction history (`?limit=20&offset=0`) |
-| `/healthz` | GET | Health check |
-| `/feedback` | POST | Submit human feedback for low-confidence predictions |
+| Endpoint    | Method | Description                                          |
+| ----------- | ------ | ---------------------------------------------------- |
+| `/predict`  | POST   | Upload an image (JPG/PNG) for classification         |
+| `/history`  | GET    | Get prediction history (`?limit=20&offset=0`)        |
+| `/healthz`  | GET    | Health check                                         |
+| `/feedback` | POST   | Submit human feedback for low-confidence predictions |
 
 ## Prediction Response
 
@@ -92,6 +92,30 @@ The frontend runs at `http://localhost:3000` and proxies API requests to the bac
 - **human_feedback** - Stores corrections for low-confidence predictions
 - **drift_events** - Data drift monitoring records
 - **alerts** - System alerts for administrators
+
+## Reset Database (Development)
+
+If you want to clear all prediction history and feedback data, reset the SQLite file.
+
+1. Stop the backend server.
+2. Remove the database file.
+3. Start the backend again (tables are created automatically at startup).
+
+```bash
+rm -f backend/product_categorization.db
+```
+
+Then run backend again:
+
+```bash
+cd backend
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Notes:
+
+- This permanently deletes all local data in all tables.
+- This is intended for local development only.
 
 ## Model
 

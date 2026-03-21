@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import create_engine, Boolean, DateTime, Float, Integer, String, Text, ForeignKey
+from sqlalchemy import create_engine, Boolean, DateTime, Float, Integer, String, Text, ForeignKey, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, relationship
 
 DATABASE_URL = "sqlite:///./product_categorization.db"
@@ -18,7 +18,7 @@ class PredictionEvent(Base):
     __tablename__ = "prediction_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     predicted_class: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     latency_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -27,6 +27,7 @@ class PredictionEvent(Base):
     width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     quality_warnings: Mapped[str] = mapped_column(Text, default="[]")
+    image_data_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     feedback: Mapped[Optional["HumanFeedback"]] = relationship(
         "HumanFeedback", back_populates="prediction", uselist=False
@@ -42,7 +43,7 @@ class HumanFeedback(Base):
         Integer, ForeignKey("prediction_events.id"), nullable=False
     )
     true_label: Mapped[str] = mapped_column(Text, nullable=False)
-    labeled_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    labeled_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
     prediction: Mapped[Optional["PredictionEvent"]] = relationship(
         "PredictionEvent", back_populates="feedback"
@@ -54,7 +55,7 @@ class DriftEvent(Base):
     __tablename__ = "drift_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     embedding_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     confidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     class_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -69,7 +70,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     alert_type: Mapped[str] = mapped_column(Text, nullable=False)
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -83,6 +84,15 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """Initialize the database by creating all tables."""
     Base.metadata.create_all(bind=engine)
+
+    # Lightweight migration for existing SQLite databases created before
+    # image_data_url existed in prediction_events.
+    with engine.begin() as conn:
+        columns = {
+            row[1] for row in conn.execute(text("PRAGMA table_info(prediction_events)"))
+        }
+        if "image_data_url" not in columns:
+            conn.execute(text("ALTER TABLE prediction_events ADD COLUMN image_data_url TEXT"))
 
 
 def get_db():

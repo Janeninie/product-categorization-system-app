@@ -71,6 +71,12 @@ export default function Home() {
   const formatConfidence = (conf: number) => (conf * 100).toFixed(1);
   const formatTime = (timestamp: string) =>
     new Date(timestamp).toLocaleString();
+  const formatLatency = (latency: number | null) =>
+    latency == null ? "-" : `${latency.toFixed(2)} ms`;
+  const formatImageSize = (width: number | null, height: number | null) =>
+    width == null || height == null ? "-" : `${width} x ${height}`;
+  const formatMetric = (value: number | null) =>
+    value == null ? "-" : value.toFixed(2);
 
   const prediction = predictionMutation.data;
   const history = historyData?.predictions ?? [];
@@ -299,6 +305,9 @@ export default function Home() {
                 <thead>
                   <tr className="border-b border-gray-200">
                     <th className="text-left py-3 px-4 font-semibold text-gray-600">
+                      Image
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-600">
                       Time
                     </th>
                     <th className="text-left py-3 px-4 font-semibold text-gray-600">
@@ -306,6 +315,18 @@ export default function Home() {
                     </th>
                     <th className="text-right py-3 px-4 font-semibold text-gray-600">
                       Confidence
+                    </th>
+                    <th className="text-right py-3 px-4 font-semibold text-gray-600">
+                      Latency
+                    </th>
+                    <th className="text-right py-3 px-4 font-semibold text-gray-600">
+                      Brightness
+                    </th>
+                    <th className="text-right py-3 px-4 font-semibold text-gray-600">
+                      Blur Var
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-gray-600">
+                      Warnings
                     </th>
                   </tr>
                 </thead>
@@ -315,6 +336,17 @@ export default function Home() {
                       key={item.id}
                       className="border-b border-gray-100 hover:bg-gray-50"
                     >
+                      <td className="py-3 px-4">
+                        {item.image_data_url ? (
+                          <img
+                            src={item.image_data_url}
+                            alt={`Prediction ${item.id}`}
+                            className="h-14 w-14 rounded-lg object-cover border border-gray-200"
+                          />
+                        ) : (
+                          <div className="h-14 w-14 rounded-lg border border-gray-200 bg-gray-100" />
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-gray-600">
                         {formatTime(item.timestamp)}
                       </td>
@@ -331,6 +363,31 @@ export default function Home() {
                       </td>
                       <td className="py-3 px-4 text-right font-medium">
                         {formatConfidence(item.confidence)}%
+                      </td>
+                      <td className="py-3 px-4 text-right text-gray-700">
+                        {formatLatency(item.latency_ms)}
+                      </td>
+                      <td className="py-3 px-4 text-right text-gray-700">
+                        {formatMetric(item.brightness)}
+                      </td>
+                      <td className="py-3 px-4 text-right text-gray-700">
+                        {formatMetric(item.blur_var)}
+                      </td>
+                      <td className="py-3 px-4">
+                        {item.quality_warnings.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {item.quality_warnings.map((warning) => (
+                              <span
+                                key={`${item.id}-${warning}`}
+                                className="px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full text-xs"
+                              >
+                                {warning.replace("_", " ")}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -31,6 +31,7 @@ class HistoryItem(BaseModel):
     width: Optional[int]
     height: Optional[int]
     quality_warnings: List[str]
+    image_data_url: Optional[str]
 
     class Config:
         from_attributes = True

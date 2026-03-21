@@ -1,5 +1,6 @@
 """FastAPI application for Smart Product Categorization System."""
 
+import base64
 import io
 import json
 import os
@@ -239,6 +240,11 @@ async def predict(file: UploadFile = File(...)):
 
     db = SessionLocal()
     try:
+        image_data_url = (
+            f"data:{file.content_type};base64,"
+            f"{base64.b64encode(contents).decode('ascii')}"
+        )
+
         prediction_event = PredictionEvent(
             predicted_class=predicted_class,
             confidence=confidence,
@@ -248,6 +254,7 @@ async def predict(file: UploadFile = File(...)):
             width=quality_metrics.width,
             height=quality_metrics.height,
             quality_warnings=json.dumps(quality_metrics.quality_warnings),
+            image_data_url=image_data_url,
         )
         db.add(prediction_event)
         db.commit()
@@ -305,6 +312,7 @@ async def get_history(
                     width=p.width,
                     height=p.height,
                     quality_warnings=warnings,
+                    image_data_url=p.image_data_url,
                 )
             )
 
