@@ -24,6 +24,7 @@ export interface HistoryItem {
   width: number | null;
   height: number | null;
   quality_warnings: string[];
+  image_data_url: string | null;
 }
 
 export interface HistoryResponse {
