@@ -28,6 +28,8 @@ export default function Home() {
       setFile(selectedFile);
       setPreview(URL.createObjectURL(selectedFile));
       setSelectedLabel("");
+      predictionMutation.reset();
+      feedbackMutation.reset();
     }
   };
 
@@ -36,6 +38,7 @@ export default function Home() {
     if (!file) return;
 
     try {
+      feedbackMutation.reset();
       const result = await predictionMutation.mutateAsync(file);
       showToast("Prediction completed successfully!", "success");
       refetchHistory();
@@ -225,7 +228,7 @@ export default function Home() {
               )}
             </div>
 
-            {prediction.low_confidence_flag && (
+            {!prediction.low_confidence_flag && (
               <div className="bg-red-50 border-2 border-red-300 rounded-xl p-6">
                 <div className="flex items-center mb-4">
                   <svg
