@@ -228,7 +228,7 @@ export default function Home() {
               )}
             </div>
 
-            {!prediction.low_confidence_flag && (
+            {prediction.low_confidence_flag && (
               <div className="bg-red-50 border-2 border-red-300 rounded-xl p-6">
                 <div className="flex items-center mb-4">
                   <svg
