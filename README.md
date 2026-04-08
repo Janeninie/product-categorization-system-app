@@ -109,7 +109,7 @@ Then run backend again:
 
 ```bash
 cd backend
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info
 ```
 
 Notes:
