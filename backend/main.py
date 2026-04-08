@@ -3,6 +3,7 @@
 import base64
 import io
 import json
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -18,9 +19,10 @@ from database import (
     SessionLocal,
     init_db,
 )
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from ml_model import build_model
+from orchestrator import run_orchestrator_from_db
 from PIL import Image
 from quality import analyze_quality
 from sqlalchemy import text
@@ -39,6 +41,24 @@ NUM_CLASSES = 2
 MODEL_NAME = os.getenv("MODEL_NAME", "").strip().lower()
 
 classifier: Any = None
+logger = logging.getLogger(__name__)
+
+
+def configure_app_logging() -> None:
+    """Ensure app logs are always visible in terminal output."""
+    if logger.handlers:
+        return
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+
+configure_app_logging()
 
 transform = transforms.Compose(
     [
@@ -203,8 +223,24 @@ def validate_image_format(file: UploadFile) -> None:
         )
 
 
+def run_orchestrator_background_task() -> None:
+    """Run orchestrator in background and log lifecycle/errors."""
+    started_at = time.perf_counter()
+    logger.info("[orchestrator-bg] started")
+    try:
+        result = run_orchestrator_from_db()
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        logger.info(
+            "[orchestrator-bg] finished in %.2f ms with result=%s",
+            elapsed_ms,
+            result,
+        )
+    except Exception:
+        logger.exception("[orchestrator-bg] failed")
+
+
 @app.post("/predict", response_model=PredictionResponse)
-async def predict(file: UploadFile = File(...)):
+async def predict(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """Process an image and return the prediction."""
     global classifier
 
@@ -265,6 +301,9 @@ async def predict(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     finally:
         db.close()
+
+    logger.info("[orchestrator-bg] queued for prediction_id=%s", prediction_id)
+    background_tasks.add_task(run_orchestrator_background_task)
 
     return PredictionResponse(
         predicted_class=predicted_class,
