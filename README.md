@@ -8,6 +8,34 @@ ML-powered web application that classifies product images into **beverage** or *
 - **Backend:** FastAPI (Python), PyTorch, safetensors, Pillow
 - **Database:** SQLite with SQLAlchemy
 
+## Code Level Architecture
+
+```mermaid
+graph TD
+    subgraph Frontend [Next.js Frontend]
+        Page[app/page.tsx]
+        Hooks[lib/hooks.ts]
+        API[lib/api.ts]
+        
+        Page -->|Uses| Hooks
+        Hooks -->|Calls| API
+    end
+
+    subgraph Backend [FastAPI Backend]
+        Main[main.py]
+        Orchestrator[orchestrator.py]
+        Model{{PyTorch Model}}
+        DB[(SQLite DB)]
+        
+        Main -->|Loads & Predicts| Model
+        Main -->|Reads/Writes| DB
+        Main -->|Background Task| Orchestrator
+        Orchestrator -->|Monitors| DB
+    end
+
+    API -->|HTTP REST API| Main
+```
+
 ## Frontend Architecture
 
 The frontend uses a modern data-fetching architecture:
